@@ -1,0 +1,52 @@
+Original prompt: Build a performant first-playable 3D browser demo for a brick-throwing game using the local brief, styleboard, models, and impact sounds. Use Vite + React + TypeScript + React Three Fiber + drei + rapier, centralize scene tuning, keep the alleyway mostly visual, support right-drag camera orbit and left-drag throw, cap active bricks at 10, and finish with a runnable static-friendly local build plus checks.
+
+2026-03-11
+- Read `brief.md` and the applicable `develop-web-game` and `pdf` skills.
+- Confirmed the repo is greenfield aside from local assets and docs.
+- Rendered the styleboard to PNG and used it to tune for a narrow alley, muted environment, and bright readable brick target.
+- Scaffolded a Vite + React + TypeScript + R3F + Rapier app in the repo root with `base: './'` for static-friendly builds.
+- Centralized world tuning in `src/config/sceneConfig.ts` for camera framing, alleyway transform, throw origin, wall anchor, physics, and audio thresholds.
+- Implemented the playable loop: right-drag orbit, left-drag throw, visible target wall, pooled impact audio, and a 10-brick thrown-projectile cap with oldest-first eviction.
+- Normalized `Brick.glb` at runtime so the imported mesh fits the physics collider and stays visually readable.
+- Added `window.render_game_to_text` for the web-game skill loop and verified the demo via both the required Playwright client and custom drag/orbit scripts.
+- Replaced the right-drag camera feel from target-orbiting to in-place head-look rotation so the camera pivots from its current position instead of circling a focus point.
+- Reworked left-drag throwing into a direct gesture system: a held brick now appears while dragging, release uses recent mouse motion for launch velocity/spin, and tiny accidental clicks no longer auto-throw.
+- Updated throw direction mapping to use the camera's full forward/right/up basis so throws follow the current viewpoint pitch as well as yaw.
+- Added angular velocity to `render_game_to_text` brick snapshots to make gesture-spin verification easier in automated checks.
+- Removed the top-left instructional HUD overlay so the demo now opens directly into a clean gameplay view.
+- Checks run:
+  - `npm run lint`
+  - `npm run build`
+  - Playwright automation against `http://127.0.0.1:4173`
+  - Playwright automation against `http://127.0.0.1:4174` verifying:
+    - straight forward drag produces forward launch from the held brick position
+    - side drag adds a clear lateral component
+    - a slight reverse at the end adds angular velocity
+    - looking up before a straight throw yields positive `velocity.y`
+    - looking down before a straight throw yields strongly negative `velocity.y`
+  - Playwright screenshot against `http://127.0.0.1:4175` confirming the HUD overlay no longer renders
+- Notes:
+  - The alleyway GLB currently contributes strongest as the floor/atmosphere layer; the lane framing is still intentionally minimal to preserve readability.
+  - Vite build succeeds, but the production JS bundle remains large because Three/R3F and the GLB assets land in one chunk.
+  - With the current user-tuned alleyway/camera transforms, screenshots often show walls/floor more than the target stack; state JSON is currently the more reliable automated validation source for throw direction.
+  - Invisible collision is now driven by `sceneConfig.invisibleWalls` in `src/config/sceneConfig.ts`; each collider has an `id`, `enabled`, `position`, and `size` for easier wall tuning against the alleyway model.
+  - Added starter collider fillers (`frontLeftFiller`, `frontRightFiller`, `targetLeftFiller`, `targetRightFiller`) plus a `ceiling` collider to make the visual alley feel more solid without editing scene JSX.
+- 2026-03-11 follow-up:
+  - Replaced the hard-coded fixed colliders in `src/game/GameWorld.tsx` with a map over `sceneConfig.invisibleWalls`.
+  - Added active invisible wall data to `render_game_to_text` / debug snapshot so tuning can be inspected during testing.
+  - Checks run:
+    - `npm run build`
+    - `npm run lint`
+  - Added `sceneConfig.debug.showInvisibleWalls`, `sceneConfig.debug.invisibleWallColor`, and `sceneConfig.debug.invisibleWallOpacity` so collider debugging is managed from the same config file as wall positions.
+  - Added a translucent box overlay for each enabled invisible wall when `showInvisibleWalls` is true; validated with the Playwright client and screenshot `output/web-game-debug/shot-0.png`.
+  - Checks run:
+    - `npm run build`
+    - `npm run lint`
+    - Playwright automation against `http://127.0.0.1:4176` with temporary debug overlay enabled for screenshot verification
+  - Removed the `f` fullscreen keyboard shortcut from `src/App.tsx` and deleted the now-unused shell wrapper styling in `src/App.css`.
+  - Simplified the render tree by removing unused `noop` callback plumbing and dead `onAimStateChange` / `onThrownBrickCountChange` props between `App`, `GameCanvas`, and `GameWorld`.
+  - Verified no fullscreen or keyboard-toggle code remains in `src/`.
+  - Checks run:
+    - `npm run build`
+    - `npm run lint`
+    - Playwright automation against `http://127.0.0.1:4177` with screenshot `output/web-game-controls-cleanup/shot-0.png`
