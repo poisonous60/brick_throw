@@ -16,7 +16,12 @@ import {
 import { roundTuple, setDebugSnapshot } from '../lib/debugState'
 import { modelAssets } from '../lib/assets'
 import { AlleywayEnvironment } from './AlleywayEnvironment'
-import { BrickBody, BrickVisual, type BrickKind } from './BrickBody'
+import {
+  BrickBody,
+  BrickVisual,
+  type BrickImpact,
+  type BrickKind,
+} from './BrickBody'
 import { useImpactAudio } from './useImpactAudio'
 import { useLookDrag } from './useLookDrag'
 import { type AimState, type ThrowLaunch, useThrowInput } from './useThrowInput'
@@ -33,6 +38,26 @@ const wallLayout = buildTargetWallLayout()
 const cameraDirection = new Vector3()
 const activeInvisibleWalls = sceneConfig.invisibleWalls.filter((wall) => wall.enabled)
 
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value))
+}
+
+function normalizeImpact(force: number) {
+  const normalized =
+    (force - sceneConfig.audio.minImpactForce) /
+    (sceneConfig.audio.maxImpactForce - sceneConfig.audio.minImpactForce)
+
+  return Math.sqrt(clamp01(normalized))
+}
+
+function normalizeImpactSpeed(speed: number) {
+  const normalized =
+    (speed - sceneConfig.audio.minImpactSpeed) /
+    (sceneConfig.audio.strongImpactSpeed - sceneConfig.audio.minImpactSpeed)
+
+  return clamp01(normalized)
+}
+
 function createThrownBrick(id: number, launch: ThrowLaunch): ThrownBrick {
   return {
     id: `thrown-${id}`,
@@ -46,15 +71,26 @@ function createThrownBrick(id: number, launch: ThrowLaunch): ThrownBrick {
 export function GameWorld() {
   const [aimState, setAimState] = useState<AimState | null>(null)
   const [thrownBricks, setThrownBricks] = useState<ThrownBrick[]>([])
-  const [lastImpact, setLastImpact] = useState<'weak' | 'strong' | null>(null)
+  const [lastImpact, setLastImpact] = useState<{
+    type: 'impact' | 'scratch'
+    clip: 'medium' | 'strong' | 'scratch'
+    force: number | null
+    speed: number | null
+    intensity: number
+    otherKind: BrickKind | 'world' | 'floor'
+  } | null>(null)
   const thrownBodiesRef = useRef(new Map<string, RapierRigidBody>())
   const wallBodiesRef = useRef(new Map<string, RapierRigidBody>())
   const brickCounterRef = useRef(0)
   const bodyImpactTimestampsRef = useRef(new Map<string, number>())
+  const pairImpactTimestampsRef = useRef(new Map<string, number>())
+  const scratchBodyTimestampsRef = useRef(new Map<string, number>())
+  const scratchActiveIdsRef = useRef(new Set<string>())
   const globalImpactTimestampRef = useRef(0)
+  const globalScratchTimestampRef = useRef(0)
   const spotLightRef = useRef<ThreeSpotLight | null>(null)
   const spotTargetRef = useRef<Object3D | null>(null)
-  const { playImpact } = useImpactAudio()
+  const { playImpact, playScratch } = useImpactAudio()
 
   useGLTF.preload(modelAssets.alleyway)
   useGLTF.preload(modelAssets.brick)
@@ -84,15 +120,33 @@ export function GameWorld() {
     targetMap.set(id, body)
   }
 
-  const handleImpact = (id: string, _kind: BrickKind, speed: number) => {
-    if (speed < sceneConfig.audio.weakSpeedThreshold) {
+  const handleImpact = ({ force, id, kind, otherId, otherKind, speed }: BrickImpact) => {
+    if (kind !== 'thrown') {
+      return
+    }
+
+    if (speed < sceneConfig.audio.minImpactSpeed) {
+      return
+    }
+
+    const forceIntensity = normalizeImpact(force)
+    const speedIntensity = normalizeImpactSpeed(speed)
+    const intensity = Math.max(forceIntensity, speedIntensity)
+
+    if (intensity <= 0) {
       return
     }
 
     const now = performance.now()
     const lastBodyImpact = bodyImpactTimestampsRef.current.get(id) ?? 0
+    const pairKey = `${id}:${otherId ?? otherKind}`
+    const lastPairImpact = pairImpactTimestampsRef.current.get(pairKey) ?? 0
 
     if (now - lastBodyImpact < sceneConfig.audio.bodyCooldownMs) {
+      return
+    }
+
+    if (now - lastPairImpact < sceneConfig.audio.pairCooldownMs) {
       return
     }
 
@@ -101,12 +155,24 @@ export function GameWorld() {
     }
 
     bodyImpactTimestampsRef.current.set(id, now)
+    pairImpactTimestampsRef.current.set(pairKey, now)
     globalImpactTimestampRef.current = now
 
-    const impactStrength =
-      speed >= sceneConfig.audio.strongSpeedThreshold ? 'strong' : 'weak'
-    setLastImpact(impactStrength)
-    playImpact(impactStrength)
+    const clip = speed >= sceneConfig.audio.strongImpactSpeed ? 'strong' : 'medium'
+
+    setLastImpact({
+      type: 'impact',
+      clip,
+      force: Number(force.toFixed(2)),
+      speed: Number(speed.toFixed(2)),
+      intensity: Number(intensity.toFixed(3)),
+      otherKind,
+    })
+    playImpact({
+      clip,
+      intensity,
+      material: otherKind === 'world' ? 'world' : 'brick',
+    })
   }
 
   const handleThrow = (launch: ThrowLaunch) => {
@@ -145,10 +211,48 @@ export function GameWorld() {
         .add(camera.position)
         .toArray() as [number, number, number],
     )
+    const despawnedThrownBrickIds = new Set<string>()
+    const scratchCandidates: Array<{ id: string; intensity: number }> = []
     const thrownBrickSnapshot = [...thrownBodiesRef.current.entries()].map(
       ([id, body]) => {
         const position = body.translation()
+
+        if (position.y <= sceneConfig.brick.despawnY) {
+          despawnedThrownBrickIds.add(id)
+          return null
+        }
+
         const velocity = body.linvel()
+        const horizontalSpeed = Math.hypot(velocity.x, velocity.z)
+        const nearFloor =
+          position.y <=
+          sceneConfig.physics.floorY +
+            sceneConfig.brick.collider[1] +
+            sceneConfig.audio.scratchFloorDistance
+        const verticalSpeed = Math.abs(velocity.y)
+        const canScratch =
+          nearFloor &&
+          !body.isSleeping() &&
+          horizontalSpeed >= sceneConfig.audio.scratchMinSpeed &&
+          horizontalSpeed <= sceneConfig.audio.scratchMaxSpeed &&
+          verticalSpeed <= sceneConfig.audio.scratchMaxVerticalSpeed
+
+        if (canScratch) {
+          const normalizedScratch =
+            (horizontalSpeed - sceneConfig.audio.scratchMinSpeed) /
+            (sceneConfig.audio.scratchMaxSpeed - sceneConfig.audio.scratchMinSpeed)
+
+          scratchCandidates.push({
+            id,
+            intensity: clamp01(normalizedScratch),
+          })
+        } else if (
+          body.isSleeping() ||
+          horizontalSpeed < sceneConfig.audio.scratchMinSpeed * 0.65 ||
+          verticalSpeed > sceneConfig.audio.scratchMaxVerticalSpeed * 1.4
+        ) {
+          scratchActiveIdsRef.current.delete(id)
+        }
 
         return {
           id,
@@ -162,7 +266,7 @@ export function GameWorld() {
           sleeping: body.isSleeping(),
         }
       },
-    )
+    ).filter((brick) => brick !== null)
     const wallBrickSnapshot = [...wallBodiesRef.current.entries()].map(
       ([id, body]) => {
         const position = body.translation()
@@ -181,6 +285,64 @@ export function GameWorld() {
         }
       },
     )
+
+    if (despawnedThrownBrickIds.size > 0) {
+      for (const id of despawnedThrownBrickIds) {
+        bodyImpactTimestampsRef.current.delete(id)
+        scratchBodyTimestampsRef.current.delete(id)
+        scratchActiveIdsRef.current.delete(id)
+        pairImpactTimestampsRef.current.forEach((_value, pairKey) => {
+          if (pairKey.startsWith(`${id}:`)) {
+            pairImpactTimestampsRef.current.delete(pairKey)
+          }
+        })
+      }
+
+      setThrownBricks((currentBricks) => {
+        const nextBricks = currentBricks.filter(
+          (brick) => !despawnedThrownBrickIds.has(brick.id),
+        )
+
+        return nextBricks.length === currentBricks.length ? currentBricks : nextBricks
+      })
+    }
+
+    for (const candidate of scratchCandidates) {
+      if (scratchActiveIdsRef.current.has(candidate.id)) {
+        continue
+      }
+
+      const now = performance.now()
+      const lastScratch = scratchBodyTimestampsRef.current.get(candidate.id) ?? 0
+      const lastImpact = bodyImpactTimestampsRef.current.get(candidate.id) ?? 0
+
+      if (now - lastScratch < sceneConfig.audio.scratchBodyCooldownMs) {
+        continue
+      }
+
+      if (now - globalScratchTimestampRef.current < sceneConfig.audio.scratchGlobalCooldownMs) {
+        continue
+      }
+
+      if (now - lastImpact < sceneConfig.audio.scratchAfterImpactDelayMs) {
+        continue
+      }
+
+      scratchBodyTimestampsRef.current.set(candidate.id, now)
+      globalScratchTimestampRef.current = now
+      scratchActiveIdsRef.current.add(candidate.id)
+      setLastImpact({
+        type: 'scratch',
+        clip: 'scratch',
+        force: null,
+        speed: null,
+        intensity: Number(candidate.intensity.toFixed(3)),
+        otherKind: 'floor',
+      })
+      playScratch({
+        intensity: candidate.intensity,
+      })
+    }
 
     setDebugSnapshot({
       coordinateSystem:

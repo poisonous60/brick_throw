@@ -69,3 +69,36 @@ Original prompt: Build a performant first-playable 3D browser demo for a brick-t
     - `npm run build`
     - `npm run lint`
     - Playwright automation against `http://127.0.0.1:4181` with screenshot `output/web-game-hdri-sky/shot-0.png`
+2026-03-12
+- Added `sceneConfig.brick.despawnY` and now remove thrown bricks from state/debug snapshots once their physics body falls to `y <= -100`.
+- Cleaned up cached per-body impact timestamps when despawning a thrown brick so removed ids do not linger in the cooldown map.
+- Swapped the impact audio imports to the new asset set in `assets/sound`: strong hits now use `impact_1.mp3` through `impact_3.mp3`, and weaker collisions use `scratch1.mp3` through `scratch4.mp3`.
+- Reworked collision audio timing to reduce "late" or off-beat SFX:
+  - `BrickBody` now emits impact data from Rapier `onContactForce` instead of `onCollisionEnter` speed snapshots.
+  - `GameWorld` filters impact sounds to thrown-brick contacts, normalizes contact force into a continuous intensity value, and applies per-body/per-pair/global cooldowns.
+  - `useImpactAudio` now uses low-latency Web Audio buffer playback instead of `HTMLAudioElement`, with pointer/key unlock and intensity-based gain/pitch variation.
+- Updated the impact banks to three tiers for the latest asset set:
+  - weak: `scratch1.mp3`, `scratch2.mp3`, `scratch3.mp3`
+  - medium: `weak_impact1.mp3`
+  - strong: `impact_1.mp3`, `impact_2.mp3`, `impact_3.mp3`
+  - Added `sceneConfig.audio.mediumImpactThreshold` so weak/medium/strong switching is controlled from config.
+- Split collision audio semantics into two behaviors:
+  - `impact` is now a one-shot collision sound driven by Rapier contact force, using `weak_impact1.mp3` for lighter hits and `impact_1~3.mp3` for stronger hits.
+  - `scratch` is now separate from impact and triggers only when a thrown brick is near the floor, sliding horizontally, and settling toward rest; it uses `scratch1~3.mp3`.
+  - Added scratch tuning controls in `sceneConfig.audio` for floor proximity, sliding speed window, and cooldown/delay timing.
+- Checks run:
+  - `npm run lint`
+  - `npm run build`
+  - Playwright client smoke capture against `http://127.0.0.1:4190` with screenshot `output/web-game-despawn-smoke/shot-0.png`
+  - Custom Playwright drag-throw smoke against `http://127.0.0.1:4192` with screenshots:
+    - `output/web-game-despawn-drag/shot-early.png`
+    - `output/web-game-despawn-drag/shot-late.png`
+  - `npm run lint`
+  - `npm run build`
+  - Playwright client smoke capture against `http://127.0.0.1:4193` with screenshot `output/web-game/shot-0.png`
+  - `npm run lint`
+  - `npm run build`
+  - Playwright preview smoke against `http://127.0.0.1:4194` with screenshot `output/web-game/shot-0.png`
+- Notes:
+  - The current lane/floor colliders keep ordinary throws in-bounds, so the new despawn path was verified via the runtime removal logic and smoke tests rather than a naturally escaping brick repro.
+  - The headless Playwright burst used for the 2026-03-12 audio follow-up successfully loaded the scene, but did not trigger a deterministic throw in automation, so the collision-audio timing change is verified at build/runtime level rather than by captured audio output.

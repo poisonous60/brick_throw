@@ -35,7 +35,16 @@ export type DebugSnapshot = {
   thrownBricks: DebugBrick[]
   wallBricks: DebugBrick[]
   invisibleWalls: DebugInvisibleWall[]
-  lastImpact: 'weak' | 'strong' | null
+  lastImpact:
+    | null
+      | {
+          type: 'impact' | 'scratch'
+          clip: 'medium' | 'strong' | 'scratch'
+          force: number | null
+          speed: number | null
+          intensity: number
+          otherKind: 'thrown' | 'wall' | 'world' | 'floor'
+        }
 }
 
 let currentSnapshot: DebugSnapshot = {

@@ -2,6 +2,7 @@ import { Clone, useGLTF } from '@react-three/drei'
 import {
   CuboidCollider,
   RigidBody,
+  type ContactForcePayload,
   type RapierRigidBody,
 } from '@react-three/rapier'
 import { useEffect, useRef } from 'react'
@@ -16,6 +17,16 @@ import { sceneConfig, type Vec3Tuple } from '../config/sceneConfig'
 import { modelAssets } from '../lib/assets'
 
 export type BrickKind = 'thrown' | 'wall'
+export type ImpactTargetKind = BrickKind | 'world'
+
+export type BrickImpact = {
+  id: string
+  kind: BrickKind
+  otherId: string | null
+  otherKind: ImpactTargetKind
+  force: number
+  speed: number
+}
 
 type BrickBodyProps = {
   id: string
@@ -25,7 +36,7 @@ type BrickBodyProps = {
   linearVelocity?: Vec3Tuple
   angularVelocity?: Vec3Tuple
   registerBody: (id: string, body: RapierRigidBody | null, kind: BrickKind) => void
-  onImpact: (id: string, kind: BrickKind, speed: number) => void
+  onImpact: (impact: BrickImpact) => void
 }
 
 type BrickVisualProps = {
@@ -89,6 +100,27 @@ function getBrickVisualTransform(root: Object3D) {
   return transform
 }
 
+function getOtherImpactTarget(payload: ContactForcePayload) {
+  const otherUserData = payload.other.rigidBodyObject?.userData as
+    | {
+        brickId?: string
+        brickKind?: BrickKind
+      }
+    | undefined
+
+  if (otherUserData?.brickKind === 'thrown' || otherUserData?.brickKind === 'wall') {
+    return {
+      otherId: otherUserData.brickId ?? null,
+      otherKind: otherUserData.brickKind,
+    } satisfies Pick<BrickImpact, 'otherId' | 'otherKind'>
+  }
+
+  return {
+    otherId: null,
+    otherKind: 'world',
+  } satisfies Pick<BrickImpact, 'otherId' | 'otherKind'>
+}
+
 export function BrickBody({
   angularVelocity,
   id,
@@ -142,6 +174,7 @@ export function BrickBody({
       ref={rigidBodyRef}
       ccd
       colliders={false}
+      userData={{ brickId: id, brickKind: kind }}
       friction={sceneConfig.brick.friction}
       linearDamping={
         kind === 'thrown'
@@ -158,15 +191,20 @@ export function BrickBody({
       gravityScale={kind === 'thrown' ? sceneConfig.brick.thrownGravityScale : 1}
       position={position}
       rotation={rotation}
-      onCollisionEnter={() => {
+      onContactForce={(payload) => {
         const velocity = rigidBodyRef.current?.linvel()
 
         if (!velocity) {
           return
         }
 
-        const speed = Math.hypot(velocity.x, velocity.y, velocity.z)
-        onImpact(id, kind, speed)
+        onImpact({
+          id,
+          kind,
+          force: payload.totalForceMagnitude,
+          speed: Math.hypot(velocity.x, velocity.y, velocity.z),
+          ...getOtherImpactTarget(payload),
+        })
       }}
     >
       <CuboidCollider args={sceneConfig.brick.collider} />
