@@ -50,3 +50,22 @@ Original prompt: Build a performant first-playable 3D browser demo for a brick-t
     - `npm run build`
     - `npm run lint`
     - Playwright automation against `http://127.0.0.1:4177` with screenshot `output/web-game-controls-cleanup/shot-0.png`
+  - Moved the main light tuning into `sceneConfig.lighting` and darkened the alley mood by lowering ambient / hemisphere / spot intensities and slightly darkening the world background + fog.
+  - `GameWorld` now reads light colors, intensities, positions, and shadow bounds from config instead of hard-coded JSX values, making further lighting tweaks easier.
+  - Checks run:
+    - `npm run build`
+    - `npm run lint`
+    - Playwright automation against `http://127.0.0.1:4178` with screenshot `output/web-game-darker-lighting/shot-0.png`
+  - Reinitialized the spotlight setup so manual tuning is reliable: it now uses explicit `spotPosition`, `spotTarget`, `spotIntensity`, `spotAngle`, `spotDistance`, `spotDecay`, and `spotShadowBias` from `sceneConfig.lighting`.
+  - Hooked the spotlight to a real Three.js target object in `GameWorld`, which fixes the previous issue where extreme spotlight values could appear to do almost nothing.
+  - Reset the lighting defaults to a dim alley baseline that clearly shows spotlight changes.
+  - Checks run:
+    - `npm run build`
+    - `npm run lint`
+    - Playwright automation against `http://127.0.0.1:4180` with screenshot `output/web-game-light-reset/shot-0.png`
+  - Added HDR sky support using `assets/texture/blue_lagoon_night_2k.hdr` via `sceneConfig.world.useHdriSky` and `drei`'s `Environment`.
+  - Note: with the current `Environment` usage, the HDR affects both the visible background and scene lighting, which makes the alley materially brighter.
+  - Checks run:
+    - `npm run build`
+    - `npm run lint`
+    - Playwright automation against `http://127.0.0.1:4181` with screenshot `output/web-game-hdri-sky/shot-0.png`

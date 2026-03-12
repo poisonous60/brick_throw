@@ -6,8 +6,8 @@ import {
   RigidBody,
   type RapierRigidBody,
 } from '@react-three/rapier'
-import { useRef, useState } from 'react'
-import { Vector3 } from 'three'
+import { useEffect, useRef, useState } from 'react'
+import { Object3D, SpotLight as ThreeSpotLight, Vector3 } from 'three'
 import {
   buildTargetWallLayout,
   sceneConfig,
@@ -52,10 +52,21 @@ export function GameWorld() {
   const brickCounterRef = useRef(0)
   const bodyImpactTimestampsRef = useRef(new Map<string, number>())
   const globalImpactTimestampRef = useRef(0)
+  const spotLightRef = useRef<ThreeSpotLight | null>(null)
+  const spotTargetRef = useRef<Object3D | null>(null)
   const { playImpact } = useImpactAudio()
 
   useGLTF.preload(modelAssets.alleyway)
   useGLTF.preload(modelAssets.brick)
+
+  useEffect(() => {
+    if (!spotLightRef.current || !spotTargetRef.current) {
+      return
+    }
+
+    spotLightRef.current.target = spotTargetRef.current
+    spotTargetRef.current.updateMatrixWorld()
+  }, [])
 
   const registerBody = (
     id: string,
@@ -213,33 +224,41 @@ export function GameWorld() {
         ]}
       />
 
-      <ambientLight intensity={0.78} />
+      <ambientLight intensity={sceneConfig.lighting.ambientIntensity} />
       <hemisphereLight
-        intensity={0.38}
-        color="#efe7dd"
-        groundColor="#31261f"
+        intensity={sceneConfig.lighting.hemisphereIntensity}
+        color={sceneConfig.lighting.hemisphereSkyColor}
+        groundColor={sceneConfig.lighting.hemisphereGroundColor}
       />
       <directionalLight
         castShadow
-        intensity={1.35}
-        position={[4.5, 8, 5]}
+        intensity={sceneConfig.lighting.directionalIntensity}
+        color={sceneConfig.lighting.directionalColor}
+        position={sceneConfig.lighting.directionalPosition}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1}
-        shadow-camera-far={24}
-        shadow-camera-left={-8}
-        shadow-camera-right={8}
-        shadow-camera-top={8}
-        shadow-camera-bottom={-8}
+        shadow-camera-far={sceneConfig.lighting.directionalShadowFar}
+        shadow-camera-left={-sceneConfig.lighting.directionalShadowBounds}
+        shadow-camera-right={sceneConfig.lighting.directionalShadowBounds}
+        shadow-camera-top={sceneConfig.lighting.directionalShadowBounds}
+        shadow-camera-bottom={-sceneConfig.lighting.directionalShadowBounds}
+      />
+      <object3D
+        ref={spotTargetRef}
+        position={sceneConfig.lighting.spotTarget}
       />
       <spotLight
-        angle={0.45}
+        ref={spotLightRef}
+        angle={sceneConfig.lighting.spotAngle}
         castShadow
-        intensity={9}
-        penumbra={0.6}
-        position={[0, 6, -4]}
-        distance={18}
-        color="#ffe0c4"
+        intensity={sceneConfig.lighting.spotIntensity}
+        penumbra={sceneConfig.lighting.spotPenumbra}
+        position={sceneConfig.lighting.spotPosition}
+        distance={sceneConfig.lighting.spotDistance}
+        decay={sceneConfig.lighting.spotDecay}
+        shadow-bias={sceneConfig.lighting.spotShadowBias}
+        color={sceneConfig.lighting.spotColor}
       />
 
       <Physics gravity={sceneConfig.physics.gravity}>
